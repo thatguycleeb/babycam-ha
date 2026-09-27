@@ -1,5 +1,5 @@
 name: BabyCam
-version: "0.1.1"
+version: "0.1.2"
 slug: babycam
 description: Private, local-only baby monitor. Any phone's browser becomes the camera.
 arch:

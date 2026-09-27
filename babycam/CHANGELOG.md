@@ -7,3 +7,7 @@
 ## 0.1.1
 
 - Build on the official Node.js image (Docker Hub) instead of the Home Assistant base image.
+
+## 0.1.2
+
+- Drop deprecated build.yaml; install Node.js on the Home Assistant base image.

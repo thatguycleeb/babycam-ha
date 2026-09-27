@@ -1,5 +1,7 @@
-ARG BUILD_FROM=node:22-alpine
+ARG BUILD_FROM=ghcr.io/home-assistant/base:latest
 FROM $BUILD_FROM
+
+RUN apk add --no-cache nodejs npm
 
 WORKDIR /app
 COPY app/package.json app/package-lock.json ./
