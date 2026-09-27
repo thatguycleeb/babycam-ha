@@ -112,14 +112,13 @@ Go to **Settings › Devices & services › Add integration › Generic Camera**
 
 | Field | Value |
 |---|---|
-| Still image URL | `https://babycam.example.com:8443/snapshot.jpg` |
-| Stream source | `https://babycam:ACCESSCODE@babycam.example.com:8443/stream.ts` |
-| Authentication | Basic |
-| Username | `babycam` |
-| Password | your access code |
-| Verify SSL certificate | On |
+| Still image URL | `http://127.0.0.1:8098/snapshot.jpg` |
+| Stream source | `http://127.0.0.1:8098/stream.ts` |
+| Username / password | leave empty |
 
-Replace `ACCESSCODE` with your code. The add-on log prints the exact stream URL.
+`127.0.0.1` is the mini PC itself. Only Home Assistant, running on the same machine, can reach it, so no password is needed. This works even before the Cloudflare setup is done.
+
+For other devices on your network, such as an NVR, use `https://babycam.example.com:8443/stream.ts` with username `babycam` and your access code as the password.
 
 Name the camera **BabyCam** so its entity is `camera.babycam`. The live view on dashboards includes sound.
 

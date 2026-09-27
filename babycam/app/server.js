@@ -22,6 +22,7 @@ const DEV = process.env.BABYCAM_DEV === '1';
 const DATA_DIR = process.env.BABYCAM_DATA || (DEV ? path.join(__dirname, 'dev-data') : '/data');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const INGRESS_PORT = Number(process.env.BABYCAM_INGRESS_PORT) || 8099;
+const LOCAL_PORT = Number(process.env.BABYCAM_LOCAL_PORT) || 8098;
 const INGRESS_PROXY = new Set(['172.30.32.2', '::ffff:172.30.32.2']);
 const MAX_VIDEO_BACKLOG = 512 * 1024;
 const MAX_AUDIO_BACKLOG = 1024 * 1024;
@@ -147,21 +148,45 @@ function handleRequest(req, res, ingress) {
     case '/camera':
       return send(res, 200, 'text/html; charset=utf-8', page('camera.html', { ingress }));
     case '/snapshot.jpg':
-      if (!ingress && !basicAuthOk(req)) return needAuth();
-      if (!hub.lastFrame) return send(res, 503, 'text/plain', 'No frame yet');
-      return send(res, 200, 'image/jpeg', hub.lastFrame);
     case '/mjpeg':
-      if (!ingress && !basicAuthOk(req)) return needAuth();
-      return startMjpeg(req, res);
     case '/stream.ts':
-      if (!ingress && !basicAuthOk(req)) return needAuth();
-      if (!tsStream.available) return send(res, 503, 'text/plain', 'ffmpeg is not available');
-      return tsStream.addClient(req, res);
     case '/health':
-      return send(res, 200, 'application/json',
-        JSON.stringify({ camera: !!hub.camera, viewers: hub.viewers.size, mjpeg: hub.mjpeg.size, stream: tsStream.clients.size }));
+      if (!ingress && !basicAuthOk(req)) return needAuth();
+      return serveMedia(pathname, req, res);
     default:
       return send(res, 404, 'text/plain', 'Not found');
+  }
+}
+
+// Plain HTTP on 127.0.0.1 only, for Home Assistant itself (Generic Camera, go2rtc,
+// HomeKit all run on this machine). Nothing else on the network can reach it,
+// so it needs no access code or certificate.
+function handleLocalRequest(req, res) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'text/plain', 'Method not allowed');
+  const { pathname } = new URL(req.url, 'http://localhost');
+  if (['/snapshot.jpg', '/mjpeg', '/stream.ts', '/health'].includes(pathname)) {
+    return serveMedia(pathname, req, res);
+  }
+  return send(res, 404, 'text/plain', 'Not found');
+}
+
+function serveMedia(pathname, req, res) {
+  switch (pathname) {
+    case '/snapshot.jpg': {
+      // A blank frame while the phone is offline, so HA shows "offline" rather than an error.
+      const frame = hub.lastFrame || tsStream.placeholder;
+      if (!frame) return send(res, 503, 'text/plain', 'No frame yet');
+      return send(res, 200, 'image/jpeg', frame);
+    }
+    case '/mjpeg':
+      return startMjpeg(req, res);
+    case '/stream.ts':
+      if (!tsStream.available) return send(res, 503, 'text/plain', 'ffmpeg is not available');
+      return tsStream.addClient(req, res);
+    default:
+      return send(res, 200, 'application/json', JSON.stringify({
+        camera: !!hub.camera, viewers: hub.viewers.size, mjpeg: hub.mjpeg.size, stream: tsStream.clients.size,
+      }));
   }
 }
 
@@ -408,10 +433,7 @@ function announce() {
   log(`Camera phone:  ${base}/camera`);
   log(`Viewer:        ${base}/`);
   log(`Access code:   ${accessCode}`);
-  const authed = base.replace('://', `://babycam:${accessCode}@`);
-  log('Home Assistant Generic Camera:');
-  log(`  Stream source: ${authed}/stream.ts`);
-  log(`  Still image:   ${base}/snapshot.jpg  (username "babycam", password = access code)`);
+  log(`Other devices: ${base}/stream.ts and ${base}/snapshot.jpg (username "babycam", password = access code)`);
   log('──────────────────────────────────────────────');
 }
 
@@ -471,6 +493,14 @@ async function main() {
 
   const ingressServer = http.createServer((req, res) => handleRequest(req, res, true));
   listen(ingressServer, true, INGRESS_PORT, () => log('Sidebar viewer ready (Home Assistant › BabyCam)'));
+
+  const localServer = http.createServer(handleLocalRequest);
+  localServer.on('error', (e) => log(`Local stream server error on port ${LOCAL_PORT}: ${e.message}`));
+  localServer.listen(LOCAL_PORT, '127.0.0.1', () => {
+    log('Home Assistant Generic Camera (no password needed):');
+    log(`  Still image:   http://127.0.0.1:${LOCAL_PORT}/snapshot.jpg`);
+    log(`  Stream source: http://127.0.0.1:${LOCAL_PORT}/stream.ts`);
+  });
 
   if (DEV) {
     // localhost counts as a secure context, so the camera page works over plain http here.

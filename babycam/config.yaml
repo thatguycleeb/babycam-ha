@@ -1,5 +1,5 @@
 name: BabyCam
-version: "0.2.0"
+version: "0.2.1"
 slug: babycam
 description: Private, local-only baby monitor. Any phone's browser becomes the camera.
 arch:
@@ -29,7 +29,7 @@ schema:
   domain: str
   email: str
   cloudflare_api_token: password
-  access_code: str
+  access_code: str?
   port: port
   noise_threshold_db: int(-80,0)
   create_dns_record: bool
