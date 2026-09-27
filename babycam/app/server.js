@@ -16,6 +16,7 @@ const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const { ensureCertificate, cloudflare } = require('./certs');
 const HomeAssistant = require('./ha');
+const TsStream = require('./stream');
 
 const DEV = process.env.BABYCAM_DEV === '1';
 const DATA_DIR = process.env.BABYCAM_DATA || (DEV ? path.join(__dirname, 'dev-data') : '/data');
@@ -32,6 +33,8 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 const options = loadOptions();
 const accessCode = loadAccessCode();
 const ha = new HomeAssistant(log);
+const tsStream = new TsStream(log);
+tsStream.onClientsChange = () => sendViewerCount();
 
 // ---------------------------------------------------------------------------
 // Options
@@ -150,9 +153,13 @@ function handleRequest(req, res, ingress) {
     case '/mjpeg':
       if (!ingress && !basicAuthOk(req)) return needAuth();
       return startMjpeg(req, res);
+    case '/stream.ts':
+      if (!ingress && !basicAuthOk(req)) return needAuth();
+      if (!tsStream.available) return send(res, 503, 'text/plain', 'ffmpeg is not available');
+      return tsStream.addClient(req, res);
     case '/health':
       return send(res, 200, 'application/json',
-        JSON.stringify({ camera: !!hub.camera, viewers: hub.viewers.size, mjpeg: hub.mjpeg.size }));
+        JSON.stringify({ camera: !!hub.camera, viewers: hub.viewers.size, mjpeg: hub.mjpeg.size, stream: tsStream.clients.size }));
     default:
       return send(res, 404, 'text/plain', 'Not found');
   }
@@ -227,7 +234,8 @@ function broadcastText(obj) {
 }
 
 function sendViewerCount() {
-  if (hub.camera) hub.camera.send(JSON.stringify({ type: 'viewers', count: hub.viewers.size + hub.mjpeg.size }));
+  const count = hub.viewers.size + hub.mjpeg.size + tsStream.clients.size;
+  if (hub.camera) hub.camera.send(JSON.stringify({ type: 'viewers', count }));
 }
 
 function onCamera(ws) {
@@ -236,6 +244,7 @@ function onCamera(ws) {
   heartbeat(ws);
   log('Camera connected');
   ha.setCamera(true);
+  tsStream.setCameraOnline(true);
   broadcastText({ type: 'camera', online: true });
   sendViewerCount();
 
@@ -249,6 +258,7 @@ function onCamera(ws) {
     hub.camera = null;
     log('Camera disconnected');
     ha.setCamera(false);
+    tsStream.setCameraOnline(false);
     noise.reset();
     broadcastText({ type: 'camera', online: false });
   });
@@ -260,9 +270,11 @@ function onCameraPacket(buf) {
     hub.lastFrame = buf.subarray(1);
     for (const v of hub.viewers) if (v.bufferedAmount < MAX_VIDEO_BACKLOG) v.send(buf);
     for (const res of hub.mjpeg) if (res.writableLength < MAX_VIDEO_BACKLOG) writeMjpegPart(res, hub.lastFrame);
+    tsStream.pushFrame(hub.lastFrame);
   } else if (buf[0] === 2) {
     for (const v of hub.viewers) if (v.bufferedAmount < MAX_AUDIO_BACKLOG) v.send(buf);
     noise.process(buf.subarray(1));
+    tsStream.pushAudio(buf.subarray(1));
   }
 }
 
@@ -396,7 +408,10 @@ function announce() {
   log(`Camera phone:  ${base}/camera`);
   log(`Viewer:        ${base}/`);
   log(`Access code:   ${accessCode}`);
-  log(`HA camera:     ${base}/mjpeg  (still image ${base}/snapshot.jpg, user "babycam", password = access code)`);
+  const authed = base.replace('://', `://babycam:${accessCode}@`);
+  log('Home Assistant Generic Camera:');
+  log(`  Stream source: ${authed}/stream.ts`);
+  log(`  Still image:   ${base}/snapshot.jpg  (username "babycam", password = access code)`);
   log('──────────────────────────────────────────────');
 }
 

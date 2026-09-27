@@ -11,3 +11,7 @@
 ## 0.1.2
 
 - Drop deprecated build.yaml; install Node.js on the Home Assistant base image.
+
+## 0.2.0
+
+- New `/stream.ts`: H.264 + AAC stream with sound for Home Assistant (Generic Camera, go2rtc) and HomeKit Bridge. Runs only while watched, and keeps going with a blank frame if the camera phone disconnects.

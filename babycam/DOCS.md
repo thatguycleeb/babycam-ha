@@ -77,7 +77,7 @@ actions:
       title: BabyCam
       message: The baby is making noise.
       data:
-        url: /hassio/ingress/local_babycam
+        url: /hassio/ingress/local_babycam   # see note below
         push:
           sound:
             name: default
@@ -104,16 +104,54 @@ actions:
       message: The camera phone has been disconnected for a minute.
 ```
 
-### Camera entity (optional)
+## Camera entity with sound
 
-To show BabyCam on dashboards, go to **Settings › Devices & services › Add integration › MJPEG IP Camera** and enter:
+The add-on provides a standard H.264 + AAC stream at `/stream.ts`. It's encoded only while something is watching. If the camera phone disconnects, the stream keeps running with a blank frame, so HA and HomeKit don't show errors.
 
-- **MJPEG URL:** `https://babycam.example.com:8443/mjpeg`
-- **Still image URL:** `https://babycam.example.com:8443/snapshot.jpg`
-- **Username:** `babycam`
-- **Password:** your access code
+Go to **Settings › Devices & services › Add integration › Generic Camera** and enter:
 
-This is video only. Use the BabyCam panel for sound.
+| Field | Value |
+|---|---|
+| Still image URL | `https://babycam.example.com:8443/snapshot.jpg` |
+| Stream source | `https://babycam:ACCESSCODE@babycam.example.com:8443/stream.ts` |
+| Authentication | Basic |
+| Username | `babycam` |
+| Password | your access code |
+| Verify SSL certificate | On |
+
+Replace `ACCESSCODE` with your code. The add-on log prints the exact stream URL.
+
+Name the camera **BabyCam** so its entity is `camera.babycam`. The live view on dashboards includes sound.
+
+## HomeKit (camera with sound, plus noise alerts)
+
+Home Assistant recommends exposing cameras to HomeKit as their own accessory. Add this to `configuration.yaml` and restart Home Assistant. It's separate from any HomeKit Bridge you already have.
+
+```yaml
+homekit:
+  - name: BabyCam
+    port: 21065
+    mode: accessory
+    filter:
+      include_entities:
+        - camera.babycam
+    entity_config:
+      camera.babycam:
+        name: BabyCam
+        support_audio: true
+        linked_motion_sensor: binary_sensor.babycam_noise
+```
+
+Then:
+
+1. A pairing notification with a QR code appears in Home Assistant. In the Home app, tap **+ › Add Accessory** and scan it.
+2. In the Home app, open the camera's settings, turn on **Activity Notifications**, and choose **Motion is detected**.
+
+BabyCam's noise sensor acts as the camera's "motion" sensor, so the Home app sends a notification with a snapshot when the baby makes noise.
+
+Home app notifications don't get through silent mode. For that, use the critical alert automation above.
+
+HomeKit re-encodes the stream for each viewer. That's easy work for a mini PC. To save CPU, add `video_codec: copy` under `camera.babycam`; it usually works, but if the Home app shows a black picture, remove it.
 
 ### Keep the history small (optional)
 
@@ -134,8 +172,11 @@ recorder:
 - **Wrong access code too many times.** That device is blocked for 10 minutes.
 - **No Light button on iPhone.** Safari doesn't let web pages control the flashlight. It works on Android phones in Chrome.
 - **Night mode.** Phone cameras can't see in total darkness. A small night light makes a big difference.
+- **The HA camera or HomeKit shows a black picture.** That's the blank frame, which means the camera phone isn't connected. Check that the camera page is open on the phone.
+- **Portrait video has black bars.** The stream is 16:9 landscape. Stand the phone sideways and tap **Rotate** until the picture is upright.
 
 ## Privacy
 
 - The stream only travels between devices on your home network, plus the HA panel through your own HA connection.
+- HomeKit: at home, the Home app streams locally. Away from home, it goes through your Apple home hub and Apple's end-to-end encrypted relay.
 - Your BabyCam hostname appears in public certificate transparency logs, as it does for every HTTPS certificate. It resolves to a private address that only works inside your home.
