@@ -1,11 +1,9 @@
-ARG BUILD_FROM
+ARG BUILD_FROM=node:22-alpine
 FROM $BUILD_FROM
 
-RUN apk add --no-cache nodejs npm
-
 WORKDIR /app
-COPY app/package.json ./
-RUN npm install --omit=dev --no-audit --no-fund
+COPY app/package.json app/package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
 COPY app/ ./
 
 CMD ["node", "/app/server.js"]
