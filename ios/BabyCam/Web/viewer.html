@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>BabyCam</title>
+<style>
+  :root {
+    --bg: #0a0c0f;
+    --panel: rgba(18, 21, 26, 0.8);
+    --panel-solid: #14171c;
+    --line: rgba(255, 255, 255, 0.08);
+    --text: #e9ebee;
+    --muted: #8b929c;
+    --on: #f5c95a;
+    --live: #ff5a5a;
+    --ok: #5ad19a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  button, input { font: inherit; color: inherit; }
+
+  #stage { position: fixed; inset: 0; display: grid; place-items: center; }
+  #video { width: 100%; height: 100%; object-fit: contain; display: block; }
+  #video[hidden] { display: none; }
+  #placeholder { color: var(--muted); }
+  #alertRing {
+    position: fixed; inset: 0; pointer-events: none;
+    box-shadow: inset 0 0 0 0 var(--live); transition: box-shadow .25s;
+  }
+  body.noise #alertRing { box-shadow: inset 0 0 0 6px var(--live); }
+
+  .top {
+    position: fixed; top: 16px; left: 16px; right: 16px;
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    transition: opacity .3s;
+  }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 12px; border-radius: 999px; font-size: 13px;
+    background: var(--panel); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .pill.live .dot { background: var(--live); box-shadow: 0 0 0 3px rgba(255, 90, 90, .25); }
+  .pill.warn .dot { background: var(--on); }
+
+  .dock {
+    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+    width: min(640px, calc(100% - 32px));
+    background: var(--panel); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--line); border-radius: 18px; padding: 12px;
+    transition: opacity .3s;
+  }
+  body.idle .dock, body.idle .top { opacity: 0; }
+  body.idle { cursor: none; }
+
+  .meter { position: relative; height: 6px; border-radius: 3px; background: rgba(255,255,255,.12); margin-bottom: 12px; }
+  .meter .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 3px; background: var(--ok); transition: width .1s linear; }
+  .meter .mark { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--live); }
+
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(68px, 1fr)); gap: 8px; }
+  .ctl {
+    border: 0; border-radius: 12px; padding: 10px 6px; cursor: pointer;
+    background: rgba(255,255,255,.08);
+    display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px;
+  }
+  .ctl svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .ctl:hover { background: rgba(255,255,255,.14); }
+  .ctl.on { background: var(--on); color: #1a1406; }
+  .ctl[hidden] { display: none; }
+
+  .alertrow { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .alertrow label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+  .alertrow input[type=range] { flex: 1; min-width: 0; accent-color: var(--live); }
+  .alertrow output { width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+
+  #gate { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; background: rgba(10,12,15,.94); }
+  #gate[hidden] { display: none; }
+  .card { width: min(360px, 100%); background: var(--panel-solid); border: 1px solid var(--line); border-radius: 20px; padding: 24px; }
+  .card h1 { margin: 0 0 4px; font-size: 22px; }
+  .card p { margin: 0 0 16px; color: var(--muted); }
+  .card input {
+    width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--line);
+    background: #0d0f13; font-size: 28px; letter-spacing: .3em; text-align: center;
+  }
+  .card .primary {
+    width: 100%; margin-top: 12px; padding: 14px; border: 0; border-radius: 12px; cursor: pointer;
+    background: var(--text); color: var(--bg); font-weight: 600;
+  }
+  .err { color: var(--live); min-height: 1.4em; margin-top: 10px; font-size: 13px; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <img id="video" alt="Camera stream" hidden>
+    <div id="placeholder">Waiting for video…</div>
+  </div>
+  <div id="alertRing"></div>
+
+  <div class="top">
+    <div id="conn" class="pill"><span class="dot"></span><span id="connText">Not connected</span></div>
+    <div class="pill" id="camLabel" hidden></div>
+  </div>
+
+  <div class="dock">
+    <div class="meter"><div class="fill" id="fill"></div><div class="mark" id="mark"></div></div>
+    <div class="controls">
+      <button class="ctl" id="mute" title="Mute (M)">
+        <svg viewBox="0 0 24 24" id="muteIcon"></svg><span id="muteLabel">Sound</span>
+      </button>
+      <button class="ctl" id="flip" title="Switch camera">
+        <svg viewBox="0 0 24 24"><path d="M21 4v6h-6M3 20v-6h6"/><path d="M20 10a8 8 0 0 0-14.3-3.3M4 14a8 8 0 0 0 14.3 3.3"/></svg><span>Flip</span>
+      </button>
+      <button class="ctl" id="torch" title="Flashlight" hidden>
+        <svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg><span>Light</span>
+      </button>
+      <button class="ctl" id="night" title="Night mode">
+        <svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg><span>Night</span>
+      </button>
+      <button class="ctl" id="rotate" title="Rotate">
+        <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg><span>Rotate</span>
+      </button>
+      <button class="ctl" id="full" title="Full screen (F)">
+        <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span>Full</span>
+      </button>
+    </div>
+    <div class="alertrow">
+      <label><input type="checkbox" id="alerts"> Noise alert</label>
+      <input type="range" id="threshold" min="-70" max="-10" step="1" aria-label="Alert level">
+      <output id="thrVal"></output>
+    </div>
+  </div>
+
+  <div id="gate">
+    <form class="card" id="gateForm">
+      <h1>BabyCam</h1>
+      <p>Enter the pairing code shown on the camera phone.</p>
+      <input id="code" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="••••••" aria-label="Pairing code">
+      <button class="primary" type="submit">Start watching</button>
+      <div class="err" id="gateErr"></div>
+    </form>
+  </div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const HOST = params.get('host') || location.hostname;   // ?host= is handy for testing
+  const WS_PORT = Number(params.get('port')) || 8081;
+  const SAMPLE_RATE = 16000;
+  const ALERT_COOLDOWN_MS = 30000;
+  const ICONS = {
+    sound: '<path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>',
+    muted: '<path d="M11 5 6 9H3v6h3l5 4z"/><path d="m16 9 5 6M21 9l-5 6"/>',
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(key, fallback) {
+      try { const v = localStorage.getItem('babycam.' + key); return v === null ? fallback : JSON.parse(v); }
+      catch { return fallback; }
+    },
+    set(key, value) { try { localStorage.setItem('babycam.' + key, JSON.stringify(value)); } catch {} },
+  };
+
+  const state = {
+    code: store.get('code', ''),
+    muted: store.get('muted', false),
+    alerts: store.get('alerts', true),
+    threshold: store.get('threshold', -35),
+    status: null,
+    ws: null, everConnected: false, retryTimer: 0,
+    ctx: null, gain: null, nextTime: 0,
+    meterDb: -90, loudStreak: 0, lastAlert: 0, noiseTimer: 0,
+    frameUrl: null, connTitle: 'BabyCam',
+  };
+
+  const meter = (db) => Math.min(1, Math.max(0, (db + 70) / 60));
+
+  // ---------- Start / pairing ----------
+  $('code').value = state.code;
+  $('code').focus();
+  $('gateForm').addEventListener('submit', (e) => { e.preventDefault(); begin(); });
+
+  function begin() {
+    const code = $('code').value.replace(/\D/g, '');
+    if (code.length < 4) { $('gateErr').textContent = 'Enter the code shown on the camera phone.'; return; }
+    state.code = code;
+    store.set('code', code);
+    // Browsers only allow audio after a click, which is why there's a Start button.
+    if (!state.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      state.ctx = new AC();
+      state.gain = state.ctx.createGain();
+      state.gain.connect(state.ctx.destination);
+    }
+    state.ctx.resume();
+    applyMute();
+    $('gate').hidden = true;
+    connect();
+  }
+
+  function showGate(message) {
+    $('gate').hidden = false;
+    $('gateErr').textContent = message || '';
+    $('code').focus();
+  }
+
+  function setConn(text, cls) {
+    $('conn').className = 'pill ' + (cls || '');
+    $('connText').textContent = text;
+    state.connTitle = (cls === 'live' ? '● ' : '') + 'BabyCam';
+    document.title = state.connTitle;
+  }
+
+  // ---------- Connection ----------
+  function connect() {
+    clearTimeout(state.retryTimer);
+    setConn(state.everConnected ? 'Reconnecting…' : 'Connecting…', 'warn');
+    let opened = false;
+    let ws;
+    try {
+      ws = new WebSocket(`ws://${HOST}:${WS_PORT}`, ['code-' + state.code]);
+    } catch (e) {
+      showGate('Could not open a connection to the camera.');
+      return;
+    }
+    ws.binaryType = 'arraybuffer';
+    state.ws = ws;
+
+    ws.onopen = () => {
+      opened = true;
+      state.everConnected = true;
+      setConn('Live', 'live');
+    };
+    ws.onmessage = (e) => {
+      if (typeof e.data === 'string') {
+        try { onStatus(JSON.parse(e.data)); } catch {}
+      } else {
+        onPacket(e.data);
+      }
+    };
+    ws.onclose = () => {
+      if (state.ws !== ws) return;
+      state.ws = null;
+      if (!opened && !state.everConnected) {
+        setConn('Not connected');
+        showGate("Couldn't connect. Check the code on the camera phone, and that BabyCam is open in Camera mode.");
+        return;
+      }
+      setConn('Reconnecting…', 'warn');
+      state.retryTimer = setTimeout(connect, 2000);
+    };
+  }
+
+  function send(cmd, value) {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    state.ws.send(JSON.stringify(value === undefined ? { cmd } : { cmd, value }));
+  }
+
+  // ---------- Incoming data ----------
+  function onPacket(buf) {
+    const type = new Uint8Array(buf, 0, 1)[0];
+    if (type === 1) showFrame(new Blob([new Uint8Array(buf, 1)], { type: 'image/jpeg' }));
+    else if (type === 2) onAudio(new Int16Array(buf.slice(1)));   // slice: Int16Array needs even alignment
+  }
+
+  function showFrame(blob) {
+    const url = URL.createObjectURL(blob);
+    const old = state.frameUrl;
+    state.frameUrl = url;
+    const img = $('video');
+    img.src = url;
+    img.hidden = false;
+    $('placeholder').hidden = true;
+    if (old) URL.revokeObjectURL(old);
+  }
+
+  function onAudio(samples) {
+    const n = samples.length;
+    if (!n) return;
+    const floats = new Float32Array(n);
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      const v = samples[i] / 32768;
+      floats[i] = v;
+      sum += v * v;
+    }
+    onLevel(Math.max(-90, 20 * Math.log10(Math.sqrt(sum / n) || 1e-9)));
+
+    const ctx = state.ctx;
+    if (!ctx || ctx.state !== 'running') return;
+    const buffer = ctx.createBuffer(1, n, SAMPLE_RATE);
+    buffer.copyToChannel(floats, 0);
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(state.gain);
+    // Small jitter buffer; if we fall behind or drift too far ahead, snap back to live.
+    const now = ctx.currentTime;
+    if (state.nextTime < now + 0.02 || state.nextTime > now + 0.8) state.nextTime = now + 0.12;
+    src.start(state.nextTime);
+    state.nextTime += buffer.duration;
+  }
+
+  function onStatus(s) {
+    if (!s || s.type !== 'status') return;
+    state.status = s;
+    $('torch').hidden = !s.hasTorch;
+    $('torch').classList.toggle('on', !!s.torch);
+    $('night').classList.toggle('on', !!s.night);
+    $('camLabel').hidden = false;
+    $('camLabel').textContent = s.camera === 'front' ? 'Front camera' : 'Back camera';
+  }
+
+  // ---------- Level meter & noise alerts ----------
+  function onLevel(db) {
+    // Fast attack, slower release so the meter is readable.
+    state.meterDb = db > state.meterDb ? db : state.meterDb * 0.7 + db * 0.3;
+    const loud = state.alerts && db > state.threshold;
+    $('fill').style.width = (meter(state.meterDb) * 100) + '%';
+    $('fill').style.background = loud ? 'var(--live)' : 'var(--ok)';
+
+    if (!state.alerts) { state.loudStreak = 0; return; }
+    state.loudStreak = loud ? state.loudStreak + 1 : 0;
+    if (state.loudStreak >= 3) noise();   // ~0.25 s above the line
+  }
+
+  function noise() {
+    document.body.classList.add('noise');
+    clearTimeout(state.noiseTimer);
+    state.noiseTimer = setTimeout(() => document.body.classList.remove('noise'), 3000);
+
+    const now = Date.now();
+    if (now - state.lastAlert < ALERT_COOLDOWN_MS) return;
+    state.lastAlert = now;
+    if (state.muted) chime();          // if sound is on you'll already hear it
+    if (document.hidden) flashTitle();
+  }
+
+  function chime() {
+    const ctx = state.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    [880, 1320].forEach((freq, i) => {
+      const start = t + i * 0.18;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, start);
+      g.gain.exponentialRampToValueAtTime(0.25, start + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.35);
+      osc.connect(g).connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + 0.4);
+    });
+  }
+
+  function flashTitle() {
+    let n = 0;
+    const id = setInterval(() => {
+      document.title = n++ % 2 ? state.connTitle : '🔔 Noise — BabyCam';
+      if (n > 20 || !document.hidden) { clearInterval(id); document.title = state.connTitle; }
+    }, 700);
+  }
+
+  // ---------- Controls ----------
+  function applyMute() {
+    if (state.gain) state.gain.gain.value = state.muted ? 0 : 1;
+    $('mute').classList.toggle('on', state.muted);
+    $('muteLabel').textContent = state.muted ? 'Muted' : 'Sound';
+    $('muteIcon').innerHTML = state.muted ? ICONS.muted : ICONS.sound;
+  }
+  function toggleMute() { state.muted = !state.muted; store.set('muted', state.muted); applyMute(); }
+  function toggleFull() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen?.();
+  }
+
+  $('mute').onclick = toggleMute;
+  $('flip').onclick = () => send('swap');
+  $('torch').onclick = () => send('torch', !(state.status && state.status.torch));
+  $('night').onclick = () => send('night', !(state.status && state.status.night));
+  $('rotate').onclick = () => send('rotate');
+  $('full').onclick = toggleFull;
+
+  function renderAlertSettings() {
+    $('alerts').checked = state.alerts;
+    $('threshold').value = state.threshold;
+    $('threshold').disabled = !state.alerts;
+    $('thrVal').textContent = state.threshold + ' dB';
+    $('mark').style.left = `calc(${meter(state.threshold) * 100}% - 1px)`;
+    $('mark').hidden = !state.alerts;
+  }
+  $('alerts').onchange = (e) => { state.alerts = e.target.checked; store.set('alerts', state.alerts); renderAlertSettings(); };
+  $('threshold').oninput = (e) => { state.threshold = Number(e.target.value); store.set('threshold', state.threshold); renderAlertSettings(); };
+
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.key === 'm' || e.key === 'M') toggleMute();
+    if (e.key === 'f' || e.key === 'F') toggleFull();
+  });
+
+  // Hide the controls after a few seconds without mouse movement.
+  let idleTimer = 0;
+  function wake() {
+    document.body.classList.remove('idle');
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      if ($('gate').hidden && !document.querySelector('.dock:hover')) document.body.classList.add('idle');
+    }, 4000);
+  }
+  ['mousemove', 'touchstart', 'keydown'].forEach((ev) => document.addEventListener(ev, wake, { passive: true }));
+
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && state.ctx) state.ctx.resume(); });
+
+  applyMute();
+  renderAlertSettings();
+  wake();
+</script>
+</body>
+</html>

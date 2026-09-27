@@ -1,0 +1,13 @@
+{
+  "name": "babycam-addon",
+  "version": "0.1.0",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "acme-client": "^5.4.0",
+    "ws": "^8.18.0"
+  }
+}

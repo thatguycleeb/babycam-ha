@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#000000">
+<title>BabyCam Camera</title>
+<!--BABYCAM_CONFIG-->
+<style>
+  :root {
+    --bg: #000;
+    --panel: rgba(18, 21, 26, 0.8);
+    --panel-solid: #14171c;
+    --line: rgba(255, 255, 255, 0.08);
+    --text: #e9ebee;
+    --muted: #8b929c;
+    --on: #f5c95a;
+    --live: #ff5a5a;
+    --ok: #5ad19a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  button, input { font: inherit; color: inherit; }
+
+  #preview { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+  #preview.mirror { transform: scaleX(-1); }
+
+  .panel {
+    background: var(--panel); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--line); border-radius: 18px; padding: 12px;
+  }
+  .top {
+    position: fixed; left: 16px; right: 16px;
+    top: calc(16px + env(safe-area-inset-top));
+  }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .status { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .live .dot { background: var(--live); box-shadow: 0 0 0 3px rgba(255, 90, 90, .25); }
+  .warn .dot { background: var(--on); }
+  .muted { color: var(--muted); font-size: 13px; }
+  .meter { height: 6px; border-radius: 3px; background: rgba(255,255,255,.12); margin-top: 10px; overflow: hidden; }
+  .meter div { height: 100%; width: 0; background: var(--ok); transition: width .1s linear; }
+  .hint { margin: 8px 0 0; font-size: 13px; color: var(--on); }
+  .hint:empty { display: none; }
+
+  .dock {
+    position: fixed; left: 16px; right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(58px, 1fr)); gap: 8px; }
+  .ctl {
+    border: 0; border-radius: 12px; padding: 10px 4px; cursor: pointer;
+    background: rgba(255,255,255,.1);
+    display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px;
+  }
+  .ctl svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .ctl.on { background: var(--on); color: #1a1406; }
+  .ctl[hidden] { display: none; }
+
+  #dark {
+    position: fixed; inset: 0; z-index: 10; background: #000;
+    display: flex; align-items: flex-end; justify-content: center;
+    padding-bottom: calc(28px + env(safe-area-inset-bottom));
+    color: rgba(255,255,255,.13); font-size: 13px;
+  }
+  #dark[hidden] { display: none; }
+
+  #gate { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px; background: #0a0c0f; }
+  #gate[hidden] { display: none; }
+  .card { width: min(380px, 100%); background: var(--panel-solid); border: 1px solid var(--line); border-radius: 20px; padding: 24px; }
+  .card h1 { margin: 0 0 4px; font-size: 22px; }
+  .card p { margin: 0 0 16px; color: var(--muted); }
+  .card input {
+    width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--line);
+    background: #0d0f13; font-size: 28px; letter-spacing: .3em; text-align: center;
+  }
+  .card input[hidden] { display: none; }
+  .primary {
+    width: 100%; margin-top: 12px; padding: 14px; border: 0; border-radius: 12px; cursor: pointer;
+    background: var(--text); color: #0a0c0f; font-weight: 600;
+  }
+  .primary:disabled { opacity: .6; }
+  .err { color: var(--live); min-height: 1.4em; margin-top: 10px; font-size: 13px; }
+  .tips { margin: 14px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  .tips li + li { margin-top: 4px; }
+</style>
+</head>
+<body>
+  <video id="preview" playsinline autoplay muted></video>
+
+  <div class="top panel">
+    <div class="row">
+      <span id="conn" class="status warn"><span class="dot"></span><span id="connText">Starting…</span></span>
+      <span id="viewers" class="muted"></span>
+    </div>
+    <div class="meter"><div id="fill"></div></div>
+    <p class="hint" id="hint"></p>
+  </div>
+
+  <div class="dock panel">
+    <div class="controls">
+      <button class="ctl" id="flip">
+        <svg viewBox="0 0 24 24"><path d="M21 4v6h-6M3 20v-6h6"/><path d="M20 10a8 8 0 0 0-14.3-3.3M4 14a8 8 0 0 0 14.3 3.3"/></svg><span>Flip</span>
+      </button>
+      <button class="ctl" id="torch" hidden>
+        <svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg><span>Light</span>
+      </button>
+      <button class="ctl" id="night">
+        <svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg><span>Night</span>
+      </button>
+      <button class="ctl" id="rotate">
+        <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg><span>Rotate</span>
+      </button>
+      <button class="ctl" id="goDark">
+        <svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="3"/><path d="M11 18h2"/></svg><span>Go dark</span>
+      </button>
+    </div>
+  </div>
+
+  <div id="dark" hidden><span id="darkText">Tap to wake</span></div>
+
+  <div id="gate">
+    <form class="card" id="gateForm">
+      <h1>BabyCam camera</h1>
+      <p>This phone becomes the camera. Keep this page open.</p>
+      <input id="code" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="Access code" aria-label="Access code">
+      <button class="primary" id="startBtn" type="submit">Start camera</button>
+      <div class="err" id="gateErr"></div>
+      <ul class="tips">
+        <li>Plug the phone in. Streaming uses a lot of battery.</li>
+        <li>Set <b>Settings › Display &amp; Brightness › Auto-Lock</b> to <b>Never</b>.</li>
+        <li>Use <b>Go dark</b> and turn brightness down in Control Center.</li>
+      </ul>
+    </form>
+  </div>
+
+<script>
+  const CFG = window.BABYCAM_CONFIG || {};
+  const FPS_WATCHED = 12;   // while someone is watching
+  const FPS_IDLE = 1;       // keeps HA's snapshot fresh without cooking the phone
+  const MAX_EDGE = 1280;
+  const JPEG_QUALITY = 0.6;
+  const TARGET_RATE = 16000;
+
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(key, fallback) {
+      try { const v = localStorage.getItem('babycam.' + key); return v === null ? fallback : JSON.parse(v); }
+      catch { return fallback; }
+    },
+    set(key, value) { try { localStorage.setItem('babycam.' + key, JSON.stringify(value)); } catch {} },
+  };
+
+  const state = {
+    code: store.get('code', ''),
+    facing: store.get('facing', 'environment'),
+    night: store.get('night', false),
+    rotation: store.get('rotation', 0),
+    torch: false, hasTorch: false, viewers: 0,
+    ws: null, retryTimer: 0, everConnected: false, stopped: false,
+    videoTrack: null, audioTrack: null,
+    audioCtx: null, audioSource: null, worklet: null, workletLoaded: false,
+    frameTimer: 0, fps: 0, encoding: false, meterDb: -90,
+    wakeLock: null, started: false, recovering: false,
+  };
+
+  const canvas = document.createElement('canvas');
+  const ctx2d = canvas.getContext('2d');
+  // Night mode: brighten shadows with a gamma curve and drop colour (hides sensor noise).
+  const NIGHT_LUT = new Uint8ClampedArray(256).map((_, v) => 255 * Math.pow(v / 255, 0.45));
+
+  // Downsamples the mic to 16 kHz Int16 in ~85 ms chunks.
+  const WORKLET_SRC = `
+    class BabyCamCapture extends AudioWorkletProcessor {
+      constructor(options) {
+        super();
+        this.ratio = sampleRate / options.processorOptions.targetRate;
+        this.pos = 0; this.acc = 0; this.count = 0;
+        this.out = new Int16Array(1360); this.n = 0;
+      }
+      process(inputs) {
+        const ch = inputs[0] && inputs[0][0];
+        if (!ch) return true;
+        for (let i = 0; i < ch.length; i++) {
+          this.acc += ch[i]; this.count++; this.pos += 1;
+          if (this.pos >= this.ratio) {
+            this.pos -= this.ratio;
+            const v = Math.max(-1, Math.min(1, this.acc / this.count));
+            this.acc = 0; this.count = 0;
+            this.out[this.n++] = v < 0 ? v * 32768 : v * 32767;
+            if (this.n === this.out.length) {
+              this.port.postMessage(this.out, [this.out.buffer]);
+              this.out = new Int16Array(1360); this.n = 0;
+            }
+          }
+        }
+        return true;
+      }
+    }
+    registerProcessor('babycam-capture', BabyCamCapture);
+  `;
+
+  // ---------- UI helpers ----------
+  function setConn(text, cls) {
+    $('conn').className = 'status ' + (cls || '');
+    $('connText').textContent = text;
+  }
+  function setHint(text) { $('hint').textContent = text || ''; }
+  function updateViewers() {
+    const n = state.viewers;
+    const label = n === 0 ? 'No one watching' : n === 1 ? '1 watching' : `${n} watching`;
+    $('viewers').textContent = label;
+    $('darkText').textContent = `${label} · tap to wake`;
+  }
+  function updateControls() {
+    $('torch').hidden = !state.hasTorch;
+    $('torch').classList.toggle('on', state.torch);
+    $('night').classList.toggle('on', state.night);
+    $('preview').classList.toggle('mirror', state.facing === 'user');
+  }
+
+  // ---------- Start ----------
+  if (CFG.ingress) $('code').hidden = true;
+  $('code').value = state.code;
+  $('gateForm').addEventListener('submit', (e) => { e.preventDefault(); begin(); });
+
+  async function begin() {
+    $('gateErr').textContent = '';
+    if (!CFG.ingress) {
+      const code = $('code').value.replace(/\D/g, '');
+      if (code.length < 4) { $('gateErr').textContent = 'Enter the access code from the add-on log.'; return; }
+      state.code = code;
+      store.set('code', code);
+    }
+    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      $('gateErr').textContent = 'Camera access needs HTTPS. Open the https:// address from the add-on log.';
+      return;
+    }
+    // Must be created during the tap, before any await.
+    if (!state.audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      state.audioCtx = new AC();
+    }
+    state.audioCtx.resume();
+
+    const btn = $('startBtn');
+    btn.disabled = true;
+    btn.textContent = 'Starting…';
+    try {
+      await startVideo();
+    } catch (e) {
+      $('gateErr').textContent = describeError(e);
+      btn.disabled = false;
+      btn.textContent = 'Start camera';
+      return;
+    }
+    try {
+      await startAudio();
+    } catch (e) {
+      setHint('No audio: ' + describeError(e));
+    }
+    btn.disabled = false;
+    btn.textContent = 'Start camera';
+
+    state.started = true;
+    state.stopped = false;
+    $('gate').hidden = true;
+    requestWakeLock();
+    updateFrameRate();
+    connect();
+  }
+
+  function describeError(e) {
+    if (e && e.name === 'NotAllowedError') {
+      return 'Camera or microphone access was blocked. In Safari tap "aA" › Website Settings, allow Camera and Microphone, and try again.';
+    }
+    if (e && e.name === 'NotFoundError') return 'No camera or microphone was found.';
+    return (e && e.message) || String(e);
+  }
+
+  function stopCapture() {
+    state.started = false;
+    clearInterval(state.frameTimer);
+    state.frameTimer = 0;
+    state.fps = 0;
+    if (state.videoTrack) state.videoTrack.stop();
+    if (state.audioTrack) state.audioTrack.stop();
+    state.videoTrack = null;
+    state.audioTrack = null;
+  }
+
+  function showGate(message) {
+    stopCapture();
+    $('gate').hidden = false;
+    $('gateErr').textContent = message || '';
+  }
+
+  // ---------- Capture ----------
+  async function startVideo() {
+    if (state.videoTrack) state.videoTrack.stop();   // iOS won't open a second camera while one is live
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: { ideal: state.facing },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 15, max: 30 },
+      },
+    });
+    const track = stream.getVideoTracks()[0];
+    state.videoTrack = track;
+    const video = $('preview');
+    video.srcObject = new MediaStream([track]);
+    await video.play().catch(() => {});
+
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    state.hasTorch = !!caps.torch;   // Android Chrome yes; iPhone Safari doesn't allow it
+    state.torch = false;
+    updateControls();
+    sendStatus();
+  }
+
+  async function startAudio() {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: false,
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+    });
+    if (state.audioTrack) state.audioTrack.stop();
+    state.audioTrack = stream.getAudioTracks()[0];
+
+    const ctx = state.audioCtx;
+    if (!state.workletLoaded) {
+      const url = URL.createObjectURL(new Blob([WORKLET_SRC], { type: 'application/javascript' }));
+      await ctx.audioWorklet.addModule(url);
+      state.workletLoaded = true;
+    }
+    if (!state.worklet) {
+      state.worklet = new AudioWorkletNode(ctx, 'babycam-capture', { processorOptions: { targetRate: TARGET_RATE } });
+      state.worklet.port.onmessage = (e) => onPcm(e.data);
+      // Safari only runs nodes that lead to the speakers, so connect through a muted gain.
+      const silent = ctx.createGain();
+      silent.gain.value = 0;
+      state.worklet.connect(silent).connect(ctx.destination);
+    }
+    if (state.audioSource) state.audioSource.disconnect();
+    state.audioSource = ctx.createMediaStreamSource(new MediaStream([state.audioTrack]));
+    state.audioSource.connect(state.worklet);
+    await ctx.resume();
+  }
+
+  function onPcm(samples) {
+    let sum = 0;
+    for (let i = 0; i < samples.length; i++) { const v = samples[i] / 32768; sum += v * v; }
+    const db = Math.max(-90, 20 * Math.log10(Math.sqrt(sum / samples.length) || 1e-9));
+    state.meterDb = db > state.meterDb ? db : state.meterDb * 0.7 + db * 0.3;
+    $('fill').style.width = Math.min(100, Math.max(0, (state.meterDb + 70) / 60 * 100)) + '%';
+
+    const ws = state.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 256 * 1024) return;
+    const packet = new Uint8Array(1 + samples.byteLength);
+    packet[0] = 2;
+    packet.set(new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength), 1);
+    ws.send(packet);
+  }
+
+  function updateFrameRate() {
+    const fps = state.viewers > 0 ? FPS_WATCHED : FPS_IDLE;
+    if (fps === state.fps && state.frameTimer) return;
+    state.fps = fps;
+    clearInterval(state.frameTimer);
+    state.frameTimer = setInterval(captureFrame, 1000 / fps);
+  }
+
+  function captureFrame() {
+    const video = $('preview');
+    const ws = state.ws;
+    if (state.encoding || !video.videoWidth) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 512 * 1024) return;
+
+    const scale = Math.min(1, MAX_EDGE / Math.max(video.videoWidth, video.videoHeight));
+    const w = Math.round(video.videoWidth * scale);
+    const h = Math.round(video.videoHeight * scale);
+    const sideways = state.rotation % 180 !== 0;
+    const cw = sideways ? h : w;
+    const ch = sideways ? w : h;
+    if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+
+    ctx2d.save();
+    ctx2d.translate(cw / 2, ch / 2);
+    ctx2d.rotate(state.rotation * Math.PI / 180);
+    ctx2d.drawImage(video, -w / 2, -h / 2, w, h);
+    ctx2d.restore();
+
+    if (state.night) {
+      const img = ctx2d.getImageData(0, 0, cw, ch);
+      const d = img.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const y = NIGHT_LUT[(d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8];
+        d[i] = d[i + 1] = d[i + 2] = y;
+      }
+      ctx2d.putImageData(img, 0, 0);
+    }
+
+    state.encoding = true;
+    canvas.toBlob(async (blob) => {
+      try {
+        if (!blob || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+        const jpeg = new Uint8Array(await blob.arrayBuffer());
+        const packet = new Uint8Array(jpeg.length + 1);
+        packet[0] = 1;
+        packet.set(jpeg, 1);
+        state.ws.send(packet);
+      } finally {
+        state.encoding = false;
+      }
+    }, 'image/jpeg', JPEG_QUALITY);
+  }
+
+  // ---------- Connection ----------
+  function connect() {
+    clearTimeout(state.retryTimer);
+    setConn(state.everConnected ? 'Reconnecting…' : 'Connecting…', 'warn');
+    const url = new URL('ws/camera', location.href);
+    url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    url.search = '';
+    url.hash = '';
+    const ws = CFG.ingress ? new WebSocket(url) : new WebSocket(url, ['code-' + state.code]);
+    ws.binaryType = 'arraybuffer';
+    state.ws = ws;
+    let opened = false;
+
+    ws.onopen = () => {
+      opened = true;
+      state.everConnected = true;
+      setConn('Streaming', 'live');
+      sendStatus();
+    };
+    ws.onmessage = (e) => {
+      if (typeof e.data !== 'string') return;
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+      if (msg.type === 'viewers') {
+        state.viewers = msg.count;
+        updateViewers();
+        updateFrameRate();
+      } else if (msg.cmd) {
+        handleCommand(msg);
+      }
+    };
+    ws.onclose = (e) => {
+      if (state.ws !== ws) return;
+      state.ws = null;
+      if (e.code === 4000) {
+        state.stopped = true;
+        showGate('Another phone started as the camera, so this one stopped.');
+        return;
+      }
+      if (!opened && !state.everConnected) {
+        showGate("Couldn't connect. Check the access code (it's in the add-on log).");
+        return;
+      }
+      setConn('Reconnecting…', 'warn');
+      state.retryTimer = setTimeout(connect, 2000);
+    };
+  }
+
+  function sendStatus() {
+    const ws = state.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: 'status',
+      camera: state.facing === 'user' ? 'front' : 'back',
+      torch: state.torch,
+      hasTorch: state.hasTorch,
+      night: state.night,
+      rotation: state.rotation,
+    }));
+  }
+
+  // ---------- Controls (local buttons and viewer commands) ----------
+  function handleCommand(msg) {
+    const value = typeof msg.value === 'boolean' ? msg.value : undefined;
+    if (msg.cmd === 'swap') swapCamera();
+    else if (msg.cmd === 'torch') setTorch(value ?? !state.torch);
+    else if (msg.cmd === 'night') setNight(value ?? !state.night);
+    else if (msg.cmd === 'rotate') rotate();
+  }
+
+  async function swapCamera() {
+    const previous = state.facing;
+    state.facing = previous === 'environment' ? 'user' : 'environment';
+    try {
+      await startVideo();
+    } catch {
+      state.facing = previous;
+      await startVideo().catch((e) => setHint('Camera problem: ' + describeError(e)));
+    }
+    store.set('facing', state.facing);
+    // iOS sometimes mutes the mic when the camera changes.
+    if (!state.audioTrack || state.audioTrack.readyState === 'ended' || state.audioTrack.muted) {
+      await startAudio().catch(() => {});
+    }
+    updateControls();
+    sendStatus();
+  }
+
+  async function setTorch(on) {
+    if (!state.hasTorch || !state.videoTrack) return;
+    try {
+      await state.videoTrack.applyConstraints({ advanced: [{ torch: on }] });
+      state.torch = on;
+    } catch {}
+    updateControls();
+    sendStatus();
+  }
+
+  function setNight(on) {
+    state.night = on;
+    store.set('night', on);
+    updateControls();
+    sendStatus();
+  }
+
+  function rotate() {
+    state.rotation = (state.rotation + 90) % 360;
+    store.set('rotation', state.rotation);
+    setHint(state.rotation ? `Stream rotated ${state.rotation}°` : '');
+    sendStatus();
+  }
+
+  $('flip').onclick = swapCamera;
+  $('torch').onclick = () => setTorch(!state.torch);
+  $('night').onclick = () => setNight(!state.night);
+  $('rotate').onclick = rotate;
+  $('goDark').onclick = () => { $('dark').hidden = false; };
+  $('dark').onclick = () => { $('dark').hidden = true; };
+
+  // ---------- Keep running overnight ----------
+  async function requestWakeLock() {
+    if (!('wakeLock' in navigator)) {
+      setHint('This browser can\'t keep the screen on. Set Auto-Lock to Never.');
+      return;
+    }
+    try {
+      state.wakeLock = await navigator.wakeLock.request('screen');
+      state.wakeLock.addEventListener('release', () => { state.wakeLock = null; });
+    } catch {}
+  }
+
+  // Restarts anything iOS stopped (phone call, Siri, a notification sheet, etc.).
+  async function recover() {
+    if (!state.started || state.recovering || document.hidden) return;
+    state.recovering = true;
+    try {
+      if (!state.videoTrack || state.videoTrack.readyState === 'ended') await startVideo();
+      if (!state.audioTrack || state.audioTrack.readyState === 'ended') await startAudio();
+      if (state.audioCtx && state.audioCtx.state !== 'running') await state.audioCtx.resume();
+      const video = $('preview');
+      if (video.paused) await video.play().catch(() => {});
+      if (!state.wakeLock) await requestWakeLock();
+      if (!state.ws && !state.stopped && !state.retryTimer) connect();
+    } catch (e) {
+      setHint('Camera problem: ' + describeError(e));
+    } finally {
+      state.recovering = false;
+    }
+  }
+
+  setInterval(recover, 5000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) recover(); });
+
+  updateControls();
+  updateViewers();
+</script>
+</body>
+</html>

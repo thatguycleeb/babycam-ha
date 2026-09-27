@@ -1,0 +1,36 @@
+name: BabyCam
+version: "0.1.0"
+slug: babycam
+description: Private, local-only baby monitor. Any phone's browser becomes the camera.
+arch:
+  - amd64
+  - aarch64
+init: false
+startup: application
+boot: auto
+# Host networking so phones on your Wi-Fi can reach the camera page directly.
+host_network: true
+# Lets the add-on publish sound/noise/camera sensors to Home Assistant.
+homeassistant_api: true
+# Viewer in the Home Assistant sidebar (also works away from home, behind HA login).
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:baby-face-outline
+panel_title: BabyCam
+options:
+  domain: ""
+  email: ""
+  cloudflare_api_token: ""
+  access_code: ""
+  port: 8443
+  noise_threshold_db: -35
+  create_dns_record: true
+schema:
+  domain: str
+  email: str
+  cloudflare_api_token: password
+  access_code: str
+  port: port
+  noise_threshold_db: int(-80,0)
+  create_dns_record: bool
+  lan_ip: str?
