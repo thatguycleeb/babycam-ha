@@ -463,12 +463,29 @@
         return;
       }
       if (!opened && !state.everConnected) {
-        showGate("Couldn't connect. Check the access code (it's in the add-on log).");
+        showGate('Checking…');
+        explainFailure().then((message) => { $('gateErr').textContent = message; });
         return;
       }
       setConn('Reconnecting…', 'warn');
       state.retryTimer = setTimeout(connect, 2000);
     };
+  }
+
+  // Browsers don't say why a WebSocket failed, so ask the server whether the code is right.
+  async function explainFailure() {
+    try {
+      const res = await fetch('auth-check', { headers: { 'X-BabyCam-Code': state.code }, cache: 'no-store' });
+      if (res.status === 401) return 'Wrong access code. Use the code from the BabyCam add-on log.';
+      if (res.status === 429) return 'Too many wrong codes from this device. Wait 10 minutes and try again.';
+      if (res.ok) {
+        return 'The code is right, but the live connection was blocked. On iPhone, turn off ' +
+          'Settings › Wi-Fi › (i) › Limit IP Address Tracking (and iCloud Private Relay), then try again.';
+      }
+      return `BabyCam returned an error (${res.status}). Check the add-on log.`;
+    } catch {
+      return "Couldn't reach BabyCam. Make sure this phone is on your home Wi-Fi.";
+    }
   }
 
   function sendStatus() {

@@ -55,7 +55,9 @@ function loadOptions() {
 function loadAccessCode() {
   const configured = String(options.access_code || '').replace(/\D/g, '');
   if (configured.length >= 4) return configured;
-  if (options.access_code) log('access_code must be 4–8 digits; generating one instead.');
+  if (options.access_code) {
+    console.log('WARNING: access_code must be 4–8 digits (numbers only). Using a generated code instead; see "Access code" below.');
+  }
   const file = path.join(DATA_DIR, 'access_code');
   try {
     const saved = fs.readFileSync(file, 'utf8').trim();
@@ -98,6 +100,10 @@ function safeEqual(a, b) {
   const x = Buffer.from(String(a));
   const y = Buffer.from(String(b));
   return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+
+function clientIp(req) {
+  return String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
 }
 
 function isIngressProxy(req) {
@@ -147,6 +153,16 @@ function handleRequest(req, res, ingress) {
       return send(res, 200, 'text/html; charset=utf-8', page('viewer.html', { ingress, cameraUrl }));
     case '/camera':
       return send(res, 200, 'text/html; charset=utf-8', page('camera.html', { ingress }));
+    case '/auth-check': {
+      // Lets the pages tell "wrong code" apart from "connection blocked".
+      if (ingress) return send(res, 200, 'application/json', '{"ok":true}');
+      const ip = clientIp(req);
+      if (isBlocked(ip)) return send(res, 429, 'application/json', '{"ok":false}');
+      if (safeEqual(req.headers['x-babycam-code'] || '', accessCode)) return send(res, 200, 'application/json', '{"ok":true}');
+      authFailed(ip);
+      log(`Access code check failed from ${ip}`);
+      return send(res, 401, 'application/json', '{"ok":false}');
+    }
     case '/snapshot.jpg':
     case '/mjpeg':
     case '/stream.ts':
@@ -217,16 +233,23 @@ function handleUpgrade(req, socket, head, ingress) {
   if (ingress) {
     if (!isIngressProxy(req)) return rejectUpgrade(socket, 403);
   } else {
-    const ip = req.socket.remoteAddress;
-    if (isBlocked(ip)) return rejectUpgrade(socket, 429);
-    const offered = String(req.headers['sec-websocket-protocol'] || '').split(',').map((s) => s.trim());
+    const ip = clientIp(req);
+    if (isBlocked(ip)) {
+      log(`Rejected ${role} from ${ip}: blocked after too many wrong codes`);
+      return rejectUpgrade(socket, 429);
+    }
+    const offered = String(req.headers['sec-websocket-protocol'] || '').split(',').map((s) => s.trim()).filter(Boolean);
     if (!offered.some((p) => safeEqual(p, 'code-' + accessCode))) {
       authFailed(ip);
+      log(`Rejected ${role} from ${ip}: ${offered.length ? 'wrong access code' : 'no access code sent'}`);
       return rejectUpgrade(socket, 401);
     }
   }
 
-  wss.handleUpgrade(req, socket, head, (ws) => (role === 'camera' ? onCamera(ws) : onViewer(ws)));
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    log(`${role === 'camera' ? 'Camera' : 'Viewer'} connected from ${ingress ? 'Home Assistant' : clientIp(req)}`);
+    return role === 'camera' ? onCamera(ws) : onViewer(ws);
+  });
 }
 
 function heartbeat(ws) {
@@ -267,7 +290,6 @@ function onCamera(ws) {
   if (hub.camera) hub.camera.close(4000, 'Another camera connected');
   hub.camera = ws;
   heartbeat(ws);
-  log('Camera connected');
   ha.setCamera(true);
   tsStream.setCameraOnline(true);
   broadcastText({ type: 'camera', online: true });

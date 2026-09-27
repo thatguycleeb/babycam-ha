@@ -270,7 +270,16 @@
       state.ws = null;
       if (!opened && !state.everConnected) {
         setConn('Not connected');
-        showGate("Couldn't connect. Check the access code in the BabyCam add-on log.");
+        showGate('Checking…');
+        fetch('auth-check', { headers: { 'X-BabyCam-Code': state.code }, cache: 'no-store' })
+          .then((res) => {
+            if (res.status === 401) return 'Wrong access code. Use the code from the BabyCam add-on log.';
+            if (res.status === 429) return 'Too many wrong codes from this device. Wait 10 minutes and try again.';
+            if (res.ok) return 'The code is right, but the live connection was blocked. On iPhone, turn off Limit IP Address Tracking / iCloud Private Relay for this Wi-Fi.';
+            return `BabyCam returned an error (${res.status}). Check the add-on log.`;
+          })
+          .catch(() => "Couldn't reach BabyCam. Make sure you're on your home Wi-Fi.")
+          .then((message) => { $('gateErr').textContent = message; });
         return;
       }
       setConn('Reconnecting…', 'warn');
