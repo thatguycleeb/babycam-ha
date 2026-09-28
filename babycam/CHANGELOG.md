@@ -27,3 +27,9 @@
 - Log every accepted and rejected connection, with the reason.
 - The camera and viewer pages say whether the access code is wrong or the connection is being blocked.
 - Clear warning in the log when `access_code` is not 4–8 digits.
+
+## 0.3.0
+
+- Camera controls always fit on one row.
+- Works as a home-screen app (PWA) for the camera and viewer pages: manifest, icons, iOS web-app tags.
+- The camera starts automatically when opened once the access code is saved. If the phone needs a tap before the microphone can start, a banner says so.

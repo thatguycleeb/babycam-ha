@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BabyCam Camera">
+<link rel="manifest" href="camera.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
 <title>BabyCam Camera</title>
 <!--BABYCAM_CONFIG-->
 <style>
@@ -54,15 +61,29 @@
     position: fixed; left: 16px; right: 16px;
     bottom: calc(16px + env(safe-area-inset-bottom));
   }
-  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(58px, 1fr)); gap: 8px; }
+  .dock.panel { padding: 8px; }
+  /* Always one row: buttons share the width equally, however many are showing. */
+  .controls { display: flex; gap: 6px; }
   .ctl {
-    border: 0; border-radius: 12px; padding: 10px 4px; cursor: pointer;
+    flex: 1 1 0; min-width: 0;
+    border: 0; border-radius: 12px; padding: 8px 2px; cursor: pointer;
     background: rgba(255,255,255,.1);
-    display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px;
+    display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 11px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .ctl svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .ctl svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .ctl span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   .ctl.on { background: var(--on); color: #1a1406; }
   .ctl[hidden] { display: none; }
+
+  #micBanner {
+    position: fixed; left: 16px; right: 16px; z-index: 15;
+    top: 50%; transform: translateY(-50%);
+    border: 0; border-radius: 16px; padding: 18px 16px; cursor: pointer;
+    background: var(--on); color: #1a1406; font-weight: 600; font-size: 16px; text-align: center;
+    box-shadow: 0 8px 30px rgba(0,0,0,.5);
+  }
+  #micBanner[hidden] { display: none; }
 
   #dark {
     position: fixed; inset: 0; z-index: 10; background: #000;
@@ -123,6 +144,8 @@
       </button>
     </div>
   </div>
+
+  <button id="micBanner" hidden>🎤 Tap to turn on the microphone<br><small>Video is streaming, but there's no sound yet</small></button>
 
   <div id="dark" hidden><span id="darkText">Tap to wake</span></div>
 
@@ -231,9 +254,12 @@
   $('code').value = state.code;
   $('gateForm').addEventListener('submit', (e) => { e.preventDefault(); begin(); });
 
-  async function begin() {
+  // auto = started on page load (no tap). Video and the connection start fine without a tap;
+  // the microphone doesn't, so we show a banner asking for one.
+  async function begin(auto = false) {
+    if (state.started) return;
     $('gateErr').textContent = '';
-    if (!CFG.ingress) {
+    if (!CFG.ingress && !auto) {
       const code = $('code').value.replace(/\D/g, '');
       if (code.length < 4) { $('gateErr').textContent = 'Enter the access code from the add-on log.'; return; }
       state.code = code;
@@ -243,19 +269,25 @@
       $('gateErr').textContent = 'Camera access needs HTTPS. Open the https:// address from the add-on log.';
       return;
     }
-    // Must be created during the tap, before any await.
+    // Create during the tap, before any await, so audio is allowed to start.
     if (!state.audioCtx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       state.audioCtx = new AC();
+      state.audioCtx.onstatechange = updateMicBanner;
     }
-    state.audioCtx.resume();
+    state.audioCtx.resume().catch(() => {});
 
     const btn = $('startBtn');
     btn.disabled = true;
     btn.textContent = 'Starting…';
+    if (auto) {
+      $('gate').hidden = true;
+      setConn('Starting camera…', 'warn');
+    }
     try {
       await startVideo();
     } catch (e) {
+      $('gate').hidden = false;
       $('gateErr').textContent = describeError(e);
       btn.disabled = false;
       btn.textContent = 'Start camera';
@@ -272,6 +304,7 @@
     state.started = true;
     state.stopped = false;
     $('gate').hidden = true;
+    updateMicBanner();
     requestWakeLock();
     updateFrameRate();
     connect();
@@ -298,6 +331,7 @@
 
   function showGate(message) {
     stopCapture();
+    updateMicBanner();
     $('gate').hidden = false;
     $('gateErr').textContent = message || '';
   }
@@ -352,7 +386,8 @@
     if (state.audioSource) state.audioSource.disconnect();
     state.audioSource = ctx.createMediaStreamSource(new MediaStream([state.audioTrack]));
     state.audioSource.connect(state.worklet);
-    await ctx.resume();
+    // Don't await: without a tap the promise can stay pending forever (the banner handles that).
+    ctx.resume().catch(() => {});
   }
 
   function onPcm(samples) {
@@ -578,7 +613,8 @@
     try {
       if (!state.videoTrack || state.videoTrack.readyState === 'ended') await startVideo();
       if (!state.audioTrack || state.audioTrack.readyState === 'ended') await startAudio();
-      if (state.audioCtx && state.audioCtx.state !== 'running') await state.audioCtx.resume();
+      if (state.audioCtx && state.audioCtx.state !== 'running') state.audioCtx.resume().catch(() => {});
+      updateMicBanner();
       const video = $('preview');
       if (video.paused) await video.play().catch(() => {});
       if (!state.wakeLock) await requestWakeLock();
@@ -593,8 +629,25 @@
   setInterval(recover, 5000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) recover(); });
 
+  // ---------- Microphone needs a tap ----------
+  function updateMicBanner() {
+    const blocked = state.started && !!state.audioTrack && !!state.audioCtx && state.audioCtx.state !== 'running';
+    $('micBanner').hidden = !blocked;
+  }
+  function unlockAudio() {
+    if (state.audioCtx && state.audioCtx.state !== 'running') {
+      state.audioCtx.resume().then(updateMicBanner).catch(() => {});
+    }
+  }
+  $('micBanner').onclick = unlockAudio;
+  // Any tap on the page counts, e.g. waking from Go dark.
+  document.addEventListener('pointerdown', unlockAudio, true);
+
   updateControls();
   updateViewers();
+
+  // Home-screen app / reload: if we already know the code, start straight away.
+  if (!CFG.ingress && state.code) begin(true);
 </script>
 </body>
 </html>

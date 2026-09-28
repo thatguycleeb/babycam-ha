@@ -137,11 +137,24 @@ function page(name, config) {
     `<script>window.BABYCAM_CONFIG = ${JSON.stringify(config)};</script>`);
 }
 
+// Web-app manifests and icons (for "Add to Home Screen").
+const STATIC_FILES = {
+  '/camera.webmanifest': 'application/manifest+json',
+  '/viewer.webmanifest': 'application/manifest+json',
+  '/icon-180.png': 'image/png',
+  '/icon-192.png': 'image/png',
+  '/icon-512.png': 'image/png',
+};
+
 function handleRequest(req, res, ingress) {
   if (ingress && !isIngressProxy(req)) return send(res, 403, 'text/plain', 'Forbidden');
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'text/plain', 'Method not allowed');
 
   const { pathname } = new URL(req.url, 'http://localhost');
+  if (STATIC_FILES[pathname]) {
+    return send(res, 200, STATIC_FILES[pathname], fs.readFileSync(path.join(PUBLIC_DIR, pathname.slice(1))),
+      { 'Cache-Control': 'public, max-age=86400' });
+  }
   const cameraUrl = options.domain || DEV ? `${publicBase()}/camera` : null;
   const needAuth = () => {
     send(res, 401, 'text/plain', 'Access code required', { 'WWW-Authenticate': 'Basic realm="BabyCam"' });
